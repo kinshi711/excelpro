@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>turtlebot_line_follower</name>
+  <version>0.0.1</version>
+  <description>ROS 2 package for TurtleBot line following</description>
+
+  <maintainer email="user@example.com">User</maintainer>
+  <license>BSD</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>cv_bridge</exec_depend>
+  <exec_depend>opencv</exec_depend>
+
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+</package>
