@@ -1,0 +1,97 @@
+# 実行ポリシーは管理者で: Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+
+Add-Type -Namespace Win32 -Name NativeMethods -MemberDefinition @"
+    using System;
+    using System.Runtime.InteropServices;
+
+    public static class NativeMethods {
+        [DllImport("user32.dll")]
+        public static extern bool GetCursorPos(out POINT lpPoint);
+
+        [DllImport("user32.dll")]
+        public static extern bool SetCursorPos(int X, int Y);
+
+        [DllImport("user32.dll", SetLastError=true)]
+        public static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct POINT { public int X; public int Y; }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct INPUT {
+            public uint type; // 1 = Keyboard, 0 = Mouse
+            public InputUnion U;
+        }
+
+        [StructLayout(LayoutKind.Explicit)]
+        public struct InputUnion {
+            [FieldOffset(0)] public MOUSEINPUT mi;
+            [FieldOffset(0)] public KEYBDINPUT ki;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct MOUSEINPUT {
+            public int dx, dy;
+            public uint mouseData, dwFlags, time;
+            public IntPtr dwExtraInfo;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct KEYBDINPUT {
+            public ushort wVk, wScan;
+            public uint dwFlags, time;
+            public IntPtr dwExtraInfo;
+        }
+
+        public const uint INPUT_MOUSE = 0;
+        public const uint INPUT_KEYBOARD = 1;
+        public const uint KEYEVENTF_KEYUP = 0x0002;
+
+        // 画面・システムを起きたままにする
+        [DllImport("kernel32.dll")]
+        public static extern uint SetThreadExecutionState(uint esFlags);
+
+        public const uint ES_CONTINUOUS        = 0x80000000;
+        public const uint ES_SYSTEM_REQUIRED   = 0x00000001;
+        public const uint ES_DISPLAY_REQUIRED  = 0x00000002;
+    }
+"@
+
+function Send-ShiftPulse {
+    $INPUT_DOWN = New-Object Win32.NativeMethods+INPUT
+    $INPUT_DOWN.type = [Win32.NativeMethods]::INPUT_KEYBOARD
+    $INPUT_DOWN.U.ki.wVk = 0x10   # VK_SHIFT
+    $INPUT_DOWN.U.ki.dwFlags = 0
+
+    $INPUT_UP = New-Object Win32.NativeMethods+INPUT
+    $INPUT_UP.type = [Win32.NativeMethods]::INPUT_KEYBOARD
+    $INPUT_UP.U.ki.wVk = 0x10
+    $INPUT_UP.U.ki.dwFlags = [Win32.NativeMethods]::KEYEVENTF_KEYUP
+
+    [void][Win32.NativeMethods]::SendInput(2, @($INPUT_DOWN, $INPUT_UP), [System.Runtime.InteropServices.Marshal]::SizeOf($INPUT_DOWN))
+}
+
+function Jiggle-Mouse {
+    [Win32.NativeMethods+POINT]$pt = New-Object Win32.NativeMethods+POINT
+    [void][Win32.NativeMethods]::GetCursorPos([ref]$pt)
+    $nx = $pt.X + 1; $ny = $pt.Y + 1
+    [void][Win32.NativeMethods]::SetCursorPos($nx, $ny)
+    Start-Sleep -Milliseconds 80
+    [void][Win32.NativeMethods]::SetCursorPos($pt.X, $pt.Y)
+}
+
+# 画面/システムのスリープ・オフを抑止
+[void][Win32.NativeMethods]::SetThreadExecutionState(
+    [Win32.NativeMethods]::ES_CONTINUOUS -bor
+    [Win32.NativeMethods]::ES_SYSTEM_REQUIRED -bor
+    [Win32.NativeMethods]::ES_DISPLAY_REQUIRED
+)
+
+Write-Host "Keep-Alive: Shiftパルス＋マウス微移動＋表示維持を開始します。CTRL+Cで停止。"
+
+$intervalSec = 240  # 4分ごと。必要なら短く
+while ($true) {
+    Send-ShiftPulse
+    Jiggle-Mouse
+    Start-Sleep -Seconds $intervalSec
+}
