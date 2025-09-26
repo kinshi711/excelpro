@@ -1,7 +1,2 @@
-DELETE S
-FROM [PlantDB].[dbo].[Sub] AS S
-WHERE S.[DeleteFlg] <= 0;
-
-DELETE T
-FROM [PlantDB].[dbo].[Telemetry] AS T
-WHERE T.[DeleteFlg] <= 0;
+DELETE FROM [PlantDB].[dbo].[Sub]
+WHERE COALESCE([DeleteFlg], 0) <= 0;
