@@ -1,20 +1,7 @@
-BEGIN TRY
-  BEGIN TRAN;
+DELETE S
+FROM [PlantDB].[dbo].[Sub] AS S
+WHERE ISNULL(TRY_CONVERT(int, S.[DeleteFlg]), 0) <= 0;
 
-  /* 子テーブル Sub を削除（DeleteFlg <= 0） */
-  DELETE S
-  FROM [PlantDB].[dbo].[Sub] AS S
-  WHERE ISNULL(TRY_CONVERT(int, S.[DeleteFlg]), 0) <= 0;
-
-  /* 親テーブル Telemetry を削除（DeleteFlg <= 0 かつ Keep=0） */
-  DELETE T
-  FROM [PlantDB].[dbo].[Telemetry] AS T
-  WHERE ISNULL(TRY_CONVERT(int, T.[DeleteFlg]), 0) <= 0
-    AND ISNULL(T.[Keep], 0) = 0;
-
-  COMMIT TRAN;
-END TRY
-BEGIN CATCH
-  IF XACT_STATE() <> 0 ROLLBACK TRAN;
-  THROW;
-END CATCH
+DELETE T
+FROM [PlantDB].[dbo].[Telemetry] AS T
+WHERE ISNULL(TRY_CONVERT(int, T.[DeleteFlg]), 0) <= 0;
