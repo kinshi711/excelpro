@@ -1,2 +1,20 @@
-https://direct.sanwa.co.jp/contents/sp/kumitate/
-https://www.settsu.co.jp/technique/rackservice/
+BEGIN TRY
+  BEGIN TRAN;
+
+  /* 1) Sub を削除（子） */
+  DELETE S
+  FROM [PlantDB].[dbo].[Sub] AS S
+  WHERE ISNULL(TRY_CONVERT(int, S.[DeleteFlg]), 0) <= 0;
+
+  /* 2) Telemetry を削除（親）: Keep=1 は残す */
+  DELETE T
+  FROM [PlantDB].[dbo].[Telemetry] AS T
+  WHERE ISNULL(TRY_CONVERT(int, T.[DeleteFlg]), 0) <= 0
+    AND ISNULL(T.[Keep], 0) = 0;
+
+  COMMIT TRAN;
+END TRY
+BEGIN CATCH
+  IF XACT_STATE() <> 0 ROLLBACK TRAN;
+  THROW;
+END CATCH
