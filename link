@@ -1,12 +1,12 @@
 BEGIN TRY
   BEGIN TRAN;
 
-  /* 1) Sub を削除（子） */
+  /* 子テーブル Sub を削除（DeleteFlg <= 0） */
   DELETE S
   FROM [PlantDB].[dbo].[Sub] AS S
   WHERE ISNULL(TRY_CONVERT(int, S.[DeleteFlg]), 0) <= 0;
 
-  /* 2) Telemetry を削除（親）: Keep=1 は残す */
+  /* 親テーブル Telemetry を削除（DeleteFlg <= 0 かつ Keep=0） */
   DELETE T
   FROM [PlantDB].[dbo].[Telemetry] AS T
   WHERE ISNULL(TRY_CONVERT(int, T.[DeleteFlg]), 0) <= 0
