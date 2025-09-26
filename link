@@ -1,7 +1,7 @@
 DELETE S
 FROM [PlantDB].[dbo].[Sub] AS S
-WHERE ISNULL(TRY_CONVERT(int, S.[DeleteFlg]), 0) <= 0;
+WHERE S.[DeleteFlg] <= 0;
 
 DELETE T
 FROM [PlantDB].[dbo].[Telemetry] AS T
-WHERE ISNULL(TRY_CONVERT(int, T.[DeleteFlg]), 0) <= 0;
+WHERE T.[DeleteFlg] <= 0;
