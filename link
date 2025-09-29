@@ -1,2 +1,25 @@
-DELETE FROM [PlantDB].[dbo].[Sub]
-WHERE COALESCE([DeleteFlg], 0) <= 0;
+USE PlantDB;
+GO
+
+-- 既に同名があれば削除（任意）
+IF OBJECT_ID('dbo.DeleteTelemetryByFlag', 'P') IS NOT NULL
+    DROP PROCEDURE dbo.DeleteTelemetryByFlag;
+GO
+
+CREATE PROCEDURE dbo.DeleteTelemetryByFlag
+    @Threshold     int = 70,        -- しきい値（既定=70）
+    @RowsDeleted   int OUTPUT,      -- 実際に削除した行数（出力）
+    @DryRun        bit = 0          -- 1なら削除せず件数だけ返す
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+
+    IF @DryRun = 1
+    BEGIN
+        SELECT @RowsDeleted = COUNT(*)
+        FROM dbo.Telemetry
+        WHERE DeleteFlg <= @Threshold;
+
+        RETURN 0;  -- 正常
+    END
