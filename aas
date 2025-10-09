@@ -1,11 +1,15 @@
--- 1時間前より古いデータを一括削除（JST）
-CREATE OR ALTER PROCEDURE dbo.usp_Purge_Telemetry_Before1Hour_JST
+CREATE OR ALTER TRIGGER trg_AutoGrant_OnCreateDB
+ON ALL SERVER
+FOR CREATE_DATABASE
 AS
 BEGIN
-    SET NOCOUNT ON;
-    SET DEADLOCK_PRIORITY LOW;
-
-    DELETE FROM dbo.Telemetry
-    WHERE TS < DATEADD(hour, -1, SYSDATETIME());  -- いまから1時間前より古い行
-END
-GO
+  DECLARE @db sysname = EVENTDATA().value('(/EVENT_INSTANCE/DatabaseName)[1]', 'sysname');
+  DECLARE @sql nvarchar(max) = N'
+    USE ' + QUOTENAME(@db) + N';
+    IF NOT EXISTS (SELECT 1 FROM sys.database_principals WHERE name = N''DOMAIN\svc_iconics'')
+    BEGIN
+      CREATE USER [DOMAIN\svc_iconics] FOR LOGIN [DOMAIN\svc_iconics];
+      ALTER ROLE db_owner ADD MEMBER [DOMAIN\svc_iconics];
+    END';
+  EXEC(@sql);
+END;
