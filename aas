@@ -1,3 +1,42 @@
-USE [YourNewDB];
-CREATE USER [DOMAIN\svc_iconics] FOR LOGIN [DOMAIN\svc_iconics];
-ALTER ROLE db_owner ADD MEMBER [DOMAIN\svc_iconics];
+<# 目的
+ - NAS への資格情報を cmdkey で事前登録（スクリプトに平文を残さない運用）
+ - 実行ユーザーの資格ストアに保存されるため、タスクの「実行アカウント」と同じユーザーで実行する
+#>
+
+# ===== 設定（必要に応じて変更）=====
+$Servers = @(
+  'NAS01'               # 短縮名でアクセスするなら必須（\\NAS01\Share\...）
+  #'NAS01.example.local' # FQDN を使うならコメント解除
+  #'192.168.1.10'        # IP でアクセスするならコメント解除
+)
+$User = 'DOMAIN\svc-pkgxclean'  # タスクの実行アカウント
+# ====================================
+
+if ($Servers.Count -eq 0) { Write-Host "[ERROR] 登録するサーバー名が未設定です" -ForegroundColor Red; exit 1 }
+
+# パスワード入力（非表示）
+$Secure = Read-Host -AsSecureString -Prompt "パスワードを入力してください（$User）"
+
+# SecureString → 平文（cmdkey が平文を要求※入力自体は非表示）
+$BSTR = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($Secure)
+try {
+  $Plain = [Runtime.InteropServices.Marshal]::PtrToStringUni($BSTR)
+} finally {
+  [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($BSTR)
+}
+
+foreach ($s in $Servers) {
+  Write-Host "[INFO] 既存の資格情報を削除: $s"
+  cmd /c "cmdkey /delete:$s" | Out-Null
+
+  Write-Host "[INFO] 資格情報を登録: $s / $User"
+  $args = "/add:$s /user:$User /pass:$Plain"
+  $p = Start-Process -FilePath "cmdkey.exe" -ArgumentList $args -NoNewWindow -PassThru -Wait
+  if ($p.ExitCode -ne 0) {
+    Write-Host "[ERROR] 登録失敗: $s（ExitCode=$($p.ExitCode)）" -ForegroundColor Red
+    exit 1
+  }
+}
+
+Remove-Variable Plain -ErrorAction SilentlyContinue
+Write-Host "[OK] 資格情報を登録しました。UNC は登録名と一致させてください（例：\\NAS01\Share\...）。"
