@@ -1,123 +1,92 @@
-@echo off
-setlocal EnableExtensions EnableDelayedExpansion
+<# cleanup.ps1（cmdkey方針・ログ簡素版・goto廃止）
+ - Pack_YYYYMMDDhhmm.pkgx を「新しい順で3つ残し、以降削除」
+ - 実行ごとに新規ログ（pkgx_cleanup_YYYYMMDD_HHMMSS.log）
+ - ログも新しい順で3本だけ残す
+ - 認証は cmdkey 事前登録を利用（スクリプトに平文パス不要）
+ - ログにはパターン名・KEEP数は出しません
+#>
 
-rem === 設定（既存前提）========================================
-set "TARGET_DIR=C:\backup"                   & rem .pkgx がある場所
-set "LOG_DIR=C:\log"                         & rem ログ保存先（既存前提）
-set "LIST_FILE=%LOG_DIR%\_pkgx_list.tmp"     & rem 一時リスト（最後に削除）
-for /f %%I in ('powershell -NoProfile -Command "(Get-Date).ToString(\"yyyyMMdd_HHmmss\")"') do set "TS=%%I"
-set "LOG_FILE=%LOG_DIR%\pkgx_cleanup_%TS%.log"  & rem ★実行ごとに新規作成（タイムスタンプ付き）
-rem ============================================================
+# ===== ここだけ切替 =====
+$TargetDir = 'C:\backup'                  # ローカル試験
+# $TargetDir = '\\NAS01\Share\backup'     # NAS運用（cmdkey /add:NAS01 の登録名と一致させる）
+# ========================
 
-rem --- NAS を使う場合（必要時のみ REM を外す）-----------------
-REM set "NAS_PATH=\\NAS01\Share\backup"
-REM set "NAS_USER=YOUR_USER"
-REM set "NAS_PASS=YOUR_PASSWORD"
-REM net use "%NAS_PATH%" "%NAS_PASS%" /user:%NAS_USER% /persistent:no >nul
-REM if errorlevel 1 ( echo [ERROR] NAS接続失敗: %NAS_PATH% & exit /b 1 )
-REM set "TARGET_DIR=%NAS_PATH%"
-REM rem set "LOG_DIR=%NAS_PATH%\logs"
-REM rem set "LIST_FILE=%LOG_DIR%\_pkgx_list.tmp"
-REM rem for /f %%I in ('powershell -NoProfile -Command "(Get-Date).ToString(\"yyyyMMdd_HHmmss\")"') do set "TS=%%I"
-REM rem set "LOG_FILE=%LOG_DIR%\pkgx_cleanup_%TS%.log"
-rem ------------------------------------------------------------
+$LogDir      = 'C:\log'
+$KeepCount   = 3
+$NamePattern = 'Pack_????????????.pkgx'   # 12桁(YYYYMMDDhhmm)
 
-rem --- 事前チェック（フォルダは作成しない方針） ---
-if not exist "%LOG_DIR%\." (
-  echo [ERROR] ログフォルダがありません: %LOG_DIR%
-  exit /b 1
-)
+# ログ（毎回 新規）
+$ts = Get-Date -Format 'yyyyMMdd_HHmmss'
+$LogFile = Join-Path $LogDir ("pkgx_cleanup_{0}.log" -f $ts)
 
-rem ★毎回“新規に”ログを開始（上書き）
-> "%LOG_FILE%" echo [%date% %time%] ===== pkgx cleanup start =====
->>"%LOG_FILE%" echo [%date% %time%] [INFO] TARGET_DIR=%TARGET_DIR%
+function Write-Log {
+  param([string]$Message)
+  $stamp = Get-Date -Format '[yyyy/MM/dd HH:mm:ss]'
+  $line  = "{0} {1}" -f $stamp, $Message
+  if (-not (Test-Path -LiteralPath $LogFile)) {
+    Set-Content -LiteralPath $LogFile -Value $line -Encoding UTF8
+  } else {
+    Add-Content -LiteralPath $LogFile -Value $line -Encoding UTF8
+  }
+  Write-Host $line
+}
 
-if not exist "%TARGET_DIR%\." (
-  >>"%LOG_FILE%" echo [%date% %time%] [ERROR] 対象フォルダがありません: %TARGET_DIR%
-  goto :END_ERR
-)
+function Rotate-Logs {
+  $logFiles = Get-ChildItem -LiteralPath $LogDir -Filter 'pkgx_cleanup_????????_??????.log' -File |
+              Sort-Object Name -Descending
+  $logFiles | Select-Object -Skip $KeepCount | ForEach-Object {
+    try   { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction Stop }
+    catch { Write-Log ("[WARN] ログ削除失敗 {0} : {1}" -f $_.Name, $_.Exception.Message) }
+  }
+}
 
-rem --- .pkgx の一覧を作成（新しい順）。パターンは12桁日時のみ対象 ---
-dir /b /a-d /o:-n "%TARGET_DIR%\Pack_????????????.pkgx" > "%LIST_FILE%" 2>nul
+# 事前チェック（フォルダは作らない方針）
+if (!(Test-Path -LiteralPath $LogDir))    { Write-Host "[ERROR] ログフォルダがありません: $LogDir";    exit 1 }
+if (!(Test-Path -LiteralPath $TargetDir)) { Write-Host "[ERROR] 対象フォルダがありません: $TargetDir"; exit 1 }
 
-rem --- 件数カウント ---
-set /a total=0
-for /f "usebackq delims=" %%L in ("%LIST_FILE%") do set /a total+=1
->>"%LOG_FILE%" echo [%date% %time%] [INFO] list count=%total%
+Write-Log "===== pkgx cleanup start ====="
+Write-Log ("TargetDir={0}" -f $TargetDir)
 
-if %total%==0 (
-  >>"%LOG_FILE%" echo [%date% %time%] [INFO] 対象なし（Pack_????????????.pkgx）
-  goto :END_OK
-)
+# 一覧取得（名前降順＝新しい順）
+try {
+  $files = Get-ChildItem -LiteralPath $TargetDir -Filter $NamePattern -File -ErrorAction Stop |
+           Sort-Object Name -Descending
+}
+catch {
+  Write-Log ("[ERROR] 一覧取得に失敗: {0}" -f $_.Exception.Message)
+  Write-Log "===== done (ERROR) ====="
+  Rotate-Logs
+  exit 1
+}
 
-rem --- 先頭3件KEEP、4件目以降DELETE ---
-set /a i=0, keepcount=0, delcount=0, failcount=0
-for /f "usebackq delims=" %%F in ("%LIST_FILE%") do (
-  set /a i+=1
-  if !i! LEQ 3 (
-    set /a keepcount+=1
-    >>"%LOG_FILE%" echo [%date% %time%] [KEEP] %%F
-  ) else (
-    del /f /q "%TARGET_DIR%\%%F"
-    if errorlevel 1 (
-      set /a failcount+=1
-      >>"%LOG_FILE%" echo [%date% %time%] [WARN] 削除失敗 %%F
-    ) else (
-      set /a delcount+=1
-      >>"%LOG_FILE%" echo [%date% %time%] [DEL ] %%F
-    )
-  )
-)
+if (!$files -or $files.Count -eq 0) {
+  Write-Log "[INFO] 対象なし"
+  Write-Log "===== done (OK) ====="
+  Rotate-Logs
+  exit 0
+}
 
-rem --- サマリ出力 ---
-if %failcount% GTR 0 (
-  >>"%LOG_FILE%" echo [%date% %time%] [INFO] 合計 %total%／保持 %keepcount%／削除 %delcount%／失敗 %failcount%
-  goto :END_ERR
-) else (
-  >>"%LOG_FILE%" echo [%date% %time%] [INFO] 合計 %total%／保持 %keepcount%／削除 %delcount%
-  goto :END_OK
-)
+# 3件KEEP、以降DELETE
+$keep = $files | Select-Object -First $KeepCount
+$del  = $files | Select-Object -Skip  $KeepCount
 
-:END_OK
->>"%LOG_FILE%" echo [%date% %time%] ===== done (OK) =====
+$keep | ForEach-Object { Write-Log ("[KEEP] {0}" -f $_.Name) }
 
-rem --- ここで“ログも3本KEEP”にローテーション ------------------
-set /a logcount=0
-for /f "delims=" %%L in ('
-  dir /b /a-d /o:-n "%LOG_DIR%\pkgx_cleanup_????????_??????.log" 2^>nul
-') do (
-  set /a logcount+=1
-  if !logcount! GTR 3 (
-    del /f /q "%LOG_DIR%\%%L"
-    if errorlevel 1 (
-      >>"%LOG_FILE%" echo [%date% %time%] [WARN] ログ削除失敗 %%L
-    ) else (
-      >>"%LOG_FILE%" echo [%date% %time%] [LOGDEL] %%L
-    )
-  )
-)
-goto :CLEANUP
+$delOk = 0; $delNg = 0
+foreach ($f in $del) {
+  try {
+    Remove-Item -LiteralPath $f.FullName -Force -ErrorAction Stop
+    Write-Log ("[DEL ] {0}" -f $f.Name)
+    $delOk++
+  }
+  catch {
+    Write-Log ("[WARN] 削除失敗 {0} : {1}" -f $f.Name, $_.Exception.Message)
+    $delNg++
+  }
+}
 
-:END_ERR
->>"%LOG_FILE%" echo [%date% %time%] ===== done (ERROR) =====
-rem ログのローテーション自体は実行（異常時でもログが膨らみ過ぎないように）
-set /a logcount=0
-for /f "delims=" %%L in ('
-  dir /b /a-d /o:-n "%LOG_DIR%\pkgx_cleanup_????????_??????.log" 2^>nul
-') do (
-  set /a logcount+=1
-  if !logcount! GTR 3 (
-    del /f /q "%LOG_DIR%\%%L"
-    if errorlevel 1 (
-      >>"%LOG_FILE%" echo [%date% %time%] [WARN] ログ削除失敗 %%L
-    ) else (
-      >>"%LOG_FILE%" echo [%date% %time%] [LOGDEL] %%L
-    )
-  )
-)
+Write-Log ("[INFO] 合計 {0}／保持 {1}／削除 {2}／失敗 {3}" -f $files.Count, $keep.Count, $delOk, $delNg)
+Write-Log ("===== done ({0}) =====" -f ($(if($delNg -gt 0) {'ERROR'} else {'OK'})))
 
-:CLEANUP
-del /f /q "%LIST_FILE%" >nul 2>&1
-endlocal
-exit /b 0
-
+Rotate-Logs
+exit ($(if($delNg -gt 0){1}else{0}))
