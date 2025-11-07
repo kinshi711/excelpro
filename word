@@ -1,7 +1,7 @@
-USE PlantDB;
-GO
+SELECT CONVERT(varchar(19), RunAt, 120)  AS RunAt,
+       CONVERT(varchar(19), Cutoff, 120) AS Cutoff,
+       COUNT(*) AS DeletedCount
+FROM PlantDB.dbo.PurgeLogDetail
+GROUP BY RunAt, Cutoff
+ORDER BY RunAt DESC;
 
-UPDATE dbo.PurgeLogDetail
-SET TagName = N'AI101_Flow1_PV'
-WHERE RunAt = '2025-11-05 01:00:10.123'
-  AND TelemetryId = 12345;
