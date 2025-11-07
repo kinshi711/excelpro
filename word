@@ -1,6 +1,9 @@
-SELECT CONVERT(varchar(19), RunAt, 120)  AS RunAt,
-       CONVERT(varchar(19), Cutoff, 120) AS Cutoff,
-       COUNT(*) AS DeletedCount
+SELECT
+    RunAt,
+    Cutoff,
+    COUNT(*)                    AS DeletedCount,
+    MIN(TelemetryTS)            AS OldestDeletedTS,   -- 一番古く消したレコードのTS
+    MAX(TelemetryTS)            AS NewestDeletedTS    -- 一番新しく消したレコードのTS
 FROM PlantDB.dbo.PurgeLogDetail
 GROUP BY RunAt, Cutoff
 ORDER BY RunAt DESC;
