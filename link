@@ -1,4 +1,82 @@
-SELECT TOP (1) RunAt, Cutoff, COUNT(*) AS DeletedCount
-FROM PlantDB.dbo.PurgeLogDetail
-GROUP BY RunAt, Cutoff
-ORDER BY RunAt DESC;
+USE PlantDB;
+GO
+
+CREATE OR ALTER PROCEDURE dbo.usp_PurgeLog
+    @year                   datetime2,          -- 実行時刻(トランザクション側から)
+    @RunAtOut               datetime2(3) OUTPUT,
+    @CutoffOut              datetime2(3) OUTPUT,
+    @DeletedCountOut        int         OUTPUT,
+    @OldestDeletedTSOut     datetime2(3) OUTPUT,
+    @NewestDeletedTSOut     datetime2(3) OUTPUT,
+    @OldestNotDeletedTSOut  datetime2(3) OUTPUT
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    DECLARE @RunAt  datetime2(3) = SYSDATETIME();
+    DECLARE @Cutoff datetime2(3) = DATEADD(YEAR, -4, CONVERT(date, @year));
+
+    SET @RunAtOut  = @RunAt;
+    SET @CutoffOut = @Cutoff;
+
+    BEGIN TRAN;
+
+    --------------------------------------------------
+    -- ① 削除対象(今回は DeleteFlg=0 のみ)をログに退避
+    --------------------------------------------------
+    INSERT INTO dbo.PurgeLogDetail
+        (RunAt, Cutoff, TelemetryId, TelemetryTS, TagName, DeleteFlg)
+    SELECT
+        @RunAt,
+        @Cutoff,
+        t.Id,
+        t.TS,
+        t.TagName,
+        t.DeleteFlg
+    FROM dbo.Telemetry AS t
+    WHERE t.TS < @Cutoff
+      AND ISNULL(t.DeleteFlg,0) = 0;
+
+    --------------------------------------------------
+    -- ② 実データ削除
+    --------------------------------------------------
+    DELETE FROM dbo.Telemetry
+    WHERE TS < @Cutoff
+      AND ISNULL(DeleteFlg,0) = 0;
+
+    SET @DeletedCountOut = @@ROWCOUNT;
+
+    --------------------------------------------------
+    -- ③ 今回削除した中の最古/最新TS（PurgeLogDetailから）
+    --------------------------------------------------
+    SELECT
+        @OldestDeletedTSOut = MIN(TelemetryTS),
+        @NewestDeletedTSOut = MAX(TelemetryTS)
+    FROM dbo.PurgeLogDetail
+    WHERE RunAt = @RunAt;
+
+    --------------------------------------------------
+    -- ④ 削除されなかった中で一番古いTS
+    --    TS < Cutoff なのに残っている(= DeleteFlg<>0 等)ものの最小TS
+    --------------------------------------------------
+    SELECT
+        @OldestNotDeletedTSOut = MIN(TS)
+    FROM dbo.Telemetry
+    WHERE TS < @Cutoff
+      AND ISNULL(DeleteFlg,0) <> 0;
+
+    COMMIT TRAN;
+
+    --------------------------------------------------
+    -- ⑤ SSMS確認＆CSV出力用に1行返す
+    --------------------------------------------------
+    SELECT
+        @RunAtOut               AS RunAt,
+        @CutoffOut              AS Cutoff,
+        @DeletedCountOut        AS DeletedCount,
+        @OldestDeletedTSOut     AS OldestDeletedTS,
+        @NewestDeletedTSOut     AS NewestDeletedTS,
+        @OldestNotDeletedTSOut  AS OldestNotDeletedTS;
+END
+GO
+
