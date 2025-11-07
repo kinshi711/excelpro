@@ -1,1 +1,7 @@
-https://chatgpt.com/share/6715855b-0dc0-8009-8fd1-e095ab0b497d
+USE PlantDB;
+GO
+
+UPDATE dbo.PurgeLogDetail
+SET TagName = N'AI101_Flow1_PV'
+WHERE RunAt = '2025-11-05 01:00:10.123'
+  AND TelemetryId = 12345;
