@@ -1,16 +1,52 @@
-CREATE OR ALTER PROCEDURE dbo.usp_Purge_Telemetry_OlderThan_MaxTSMinusYears
-    @Years int = 4
-AS
-BEGIN
-    SET NOCOUNT ON;
-    SET DEADLOCK_PRIORITY LOW;
-
-    DECLARE @maxTs datetime2(3) = (SELECT MAX(TS) FROM dbo.Telemetry);
-    IF @maxTs IS NULL RETURN;  -- データ無しなら何もしない
-
-    DECLARE @cutoff datetime2(3) = DATEADD(year, -@Years, @maxTs);
-
-    DELETE FROM dbo.Telemetry
-    WHERE TS < @cutoff;
-END
+USE PlantDB;
 GO
+
+/* 必要なら過去のテストデータを個別にDELETEしてから実行してください
+   実運用データが混ざっている場合は絶対にまとめて消さないこと！
+*/
+
+-------------------------------------------------
+-- 5年前相当（必ず削除される想定）3件
+-- TS < 2021-11-07 00:00:00 かつ DeleteFlg=0
+-------------------------------------------------
+INSERT INTO dbo.Telemetry (TagName, Value, Quality, TS, DeleteFlg) VALUES
+('TEST_5Y_1', 100.0, 0, '2020-11-01 12:00:00.000', 0),
+('TEST_5Y_2', 101.0, 0, '2020-06-15 08:30:00.000', 0),
+('TEST_5Y_3', 102.0, 0, '2020-12-31 23:59:59.000', 0);
+
+-------------------------------------------------
+-- 4年前相当（カットオフより前なので削除される想定）3件
+-- TS < 2021-11-07 00:00:00 かつ DeleteFlg=0
+-------------------------------------------------
+INSERT INTO dbo.Telemetry (TagName, Value, Quality, TS, DeleteFlg) VALUES
+('TEST_4Y_1', 200.0, 0, '2021-11-01 10:00:00.000', 0),
+('TEST_4Y_2', 201.0, 0, '2021-10-20 12:00:00.000', 0),
+('TEST_4Y_3', 202.0, 0, '2021-11-06 12:00:00.000', 0);
+
+-------------------------------------------------
+-- 境界テスト
+-- 2021-11-06 23:59:59 → 削除対象（ギリギリ「前」）
+-- 2021-11-07 00:00:00 → 残す（境界ちょうどなので "< Cutoff" に当たらない）
+-------------------------------------------------
+INSERT INTO dbo.Telemetry (TagName, Value, Quality, TS, DeleteFlg) VALUES
+('TEST_BOUND_DEL',   300.0, 0, '2021-11-06 23:59:59.000', 0),
+('TEST_BOUND_KEEP',  301.0, 0, '2021-11-07 00:00:00.000', 0);
+
+-------------------------------------------------
+-- 保護レコードテスト
+-- TS はカットオフより前だが DeleteFlg=1 なので残る想定
+-- → OldestNotDeletedTS のテストに使える
+-------------------------------------------------
+INSERT INTO dbo.Telemetry (TagName, Value, Quality, TS, DeleteFlg) VALUES
+('TEST_PROTECT_OLD', 900.0, 0, '2020-05-01 00:00:00.000', 1);
+
+-------------------------------------------------
+-- 3年前相当（残る想定）3件
+-- TS >= 2021-11-07 なので削除対象外
+-------------------------------------------------
+INSERT INTO dbo.Telemetry (TagName, Value, Quality, TS, DeleteFlg) VALUES
+('TEST_3Y_1_KEEP', 500.0, 0, '2022-11-01 09:00:00.000', 0),
+('TEST_3Y_2_KEEP', 501.0, 0, '2022-11-10 12:00:00.000', 0),
+('TEST_3Y_3_KEEP', 502.0, 0, '2022-12-01 00:00:00.000', 0);
+GO
+
