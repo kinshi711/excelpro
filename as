@@ -1,6 +1,7 @@
-USE PlantDB;
-GO
-
-SELECT TOP 100 *
+SELECT
+    TelemetryId,
+    TelemetryTS,
+    TagName
 FROM dbo.PurgeLogDetail
-ORDER BY RunAt DESC, TelemetryTS;
+WHERE RunAt = (SELECT MAX(RunAt) FROM dbo.PurgeLogDetail)
+ORDER BY TelemetryTS;
