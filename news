@@ -1,0 +1,76 @@
+USE PlantDB;
+GO
+
+CREATE OR ALTER PROCEDURE dbo.usp_PurgeTelemetryWithLog
+    @year                   datetime2,          -- トランザクションから渡す現在時刻
+    @RunAtOut               datetime2(3) OUTPUT,
+    @CutoffOut              datetime2(3) OUTPUT,
+    @DeletedCountOut        int         OUTPUT,
+    @OldestDeletedTSOut     datetime2(3) OUTPUT,
+    @NewestDeletedTSOut     datetime2(3) OUTPUT,
+    @OldestNotDeletedTSOut  datetime2(3) OUTPUT
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    DECLARE @RunAt  datetime2(3) = SYSDATETIME();
+    DECLARE @Cutoff datetime2(3) = DATEADD(YEAR, -4, CONVERT(date, @year));
+
+    SET @RunAtOut  = @RunAt;
+    SET @CutoffOut = @Cutoff;
+
+    BEGIN TRAN;
+
+    --------------------------------------------------
+    -- ① 今回削除対象を PurgeLogDetail に退避
+    --    条件: TS < Cutoff
+    --------------------------------------------------
+    INSERT INTO dbo.PurgeLogDetail
+        (RunAt, Cutoff, TelemetryId, TelemetryTS)
+    SELECT
+        @RunAt,
+        @Cutoff,
+        t.Id,
+        t.TS
+    FROM dbo.Telemetry AS t
+    WHERE t.TS < @Cutoff;
+
+    --------------------------------------------------
+    -- ② 実データ削除
+    --------------------------------------------------
+    DELETE FROM dbo.Telemetry
+    WHERE TS < @Cutoff;
+
+    SET @DeletedCountOut = @@ROWCOUNT;
+
+    --------------------------------------------------
+    -- ③ 今回削除した中での最古/最新TS
+    --------------------------------------------------
+    SELECT
+        @OldestDeletedTSOut = MIN(TelemetryTS),
+        @NewestDeletedTSOut = MAX(TelemetryTS)
+    FROM dbo.PurgeLogDetail
+    WHERE RunAt = @RunAt;
+
+    --------------------------------------------------
+    -- ④ 削除されなかった中で一番古いTS
+    --    (削除後に残っている Telemetry 全体の MIN(TS))
+    --------------------------------------------------
+    SELECT
+        @OldestNotDeletedTSOut = MIN(TS)
+    FROM dbo.Telemetry;
+
+    COMMIT TRAN;
+
+    --------------------------------------------------
+    -- ⑤ SSMS / CSV用に1行返す
+    --------------------------------------------------
+    SELECT
+    @RunAtOut               AS [実行時間],
+    @CutoffOut              AS [境界時間],
+    @DeletedCountOut        AS [削除件数],
+    @OldestDeletedTSOut     AS [削除された中で最も古いレコード],
+    @NewestDeletedTSOut     AS [削除された中で最も新しいレコード],
+    @OldestNotDeletedTSOut  AS [削除されなかった中で最も古いレコード];
+END
+GO
