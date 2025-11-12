@@ -1,27 +1,41 @@
-import sys
-import time
+AlarmWorX64 Logger
 
-# Python 3.9 用 CarMaker CMAPI モジュールパス（Pythonバージョンに応じて変更）
-sys.path.append(r"C:\IPG\CarMaker\13.0\bin\win64\python3.9")
+AlarmWorX64 Server
 
-# CMAPI をインポート
-import cmapi
+AlertWorX
 
-# CarMaker に接続（Application Connect が ON の必要あり）
-app = cmapi.App()
-app.connect()
+BI Server
 
-# 実行したい .tcl ファイルのパス
-tcl_path = r"C:\IPG\CarMaker\13.0\Projects\YourProject\Data\Tests\MyScript.tcl"
+Connected Field Service
 
-# 1行ずつコマンドとして送信
-with open(tcl_path, 'r') as file:
-    for line in file:
-        cmd = line.strip()
-        if cmd and not cmd.startswith("#"):
-            print(f"Sending: {cmd}")
-            try:
-                app.send(cmd)
-                time.sleep(0.2)  # 必要に応じて調整
-            except Exception as e:
-                print(f"Error on '{cmd}': {e}")
+FrameWorX
+
+Global Aliasing
+
+Hyper Alarm Logger
+
+Hyper Alarm Server
+
+Hyper Historian
+
+Language Aliasing
+
+Mitsubishi Electric FA
+
+MobileHMI
+
+Modbus
+
+Security
+
+Triggers
+
+Unified Data Manager
+
+Web Services
+
+アセット（Asset）
+
+データベース（Database）
+
+ブリッジ（Bridge）
