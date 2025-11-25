@@ -1,7 +1,62 @@
-USE PlantDB;
-GO
+# pack-genesis64_noargs_ascii.ps1
+# Requirements: Windows PowerShell 5.1 (x64), GENESIS64 10.97 PowerShell cmdlets
+# Notes: ASCII-only to avoid encoding issues.
 
-UPDATE dbo.PurgeLogDetail
-SET TagName = N'AI101_Flow1_PV'
-WHERE RunAt = '2025-11-05 01:00:10.123'
-  AND TelemetryId = 12345;
+$ErrorActionPreference = 'Stop'
+
+# ===== CONFIG (edit here) =====
+$OutDir   = 'D:\pkg'                 # e.g. '\\NAS01\Share\pkg'
+$Keep     = 5
+$HostName = 'localhost'
+$Encrypt  = $false
+$Password = ''
+$FileName = ('MyProject_{0:yyyyMMdd_HHmm}.pkgx' -f (Get-Date))
+# ==============================
+
+# Relaunch as 64-bit if needed
+if (-not [Environment]::Is64BitProcess) {
+  $exe = "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe"
+  & $exe -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath
+  exit $LASTEXITCODE
+}
+
+# Check required cmdlets
+$cmds = 'Set-WbHost','Set-WbUserLogin','New-WbRootKey','Set-PackWbConfiguration','Get-WbPackFile'
+$missing = $cmds | Where-Object { -not (Get-Command $_ -ErrorAction SilentlyContinue) }
+if ($missing) {
+  throw ('GENESIS64 cmdlets not found: {0}. Please use the "GENESIS64 PowerShell" shell.' -f ($missing -join ', '))
+}
+
+# Connect (positional parameter for compatibility)
+if ([string]::IsNullOrWhiteSpace($HostName)) { $HostName = 'localhost' }
+Set-WbHost $HostName
+
+# Login (no-op if security disabled)
+Set-WbUserLogin -ErrorAction SilentlyContinue
+
+# Build pack task (no subexpression in strings)
+$ProjectKey = New-WbRootKey
+$protect    = if ($Encrypt) { 'Encrypted' } else { 'None' }
+$stamp      = (Get-Date -Format 'yyyy-MM-dd HH:mm')
+$comment    = ('Auto pack {0}' -f $stamp)
+
+$packParams = @{
+  ProjectKey      = $ProjectKey
+  UserComments    = $comment
+  CompressFiles   = 1
+  ProtectionLevel = $protect
+  Password        = $Password
+}
+$task = Set-PackWbConfiguration @packParams
+
+# Output and retention
+New-Item -ItemType Directory -Path $OutDir -Force | Out-Null
+$PkgPath = Join-Path $OutDir $FileName
+Get-WbPackFile -Task $task -TargetPath $PkgPath
+
+Get-ChildItem $OutDir -Filter '*.pkgx' -File |
+  Sort-Object LastWriteTime -Descending |
+  Select-Object -Skip $Keep |
+  Remove-Item -Force -ErrorAction SilentlyContinue
+
+Write-Host ('OK: {0}' -f $PkgPath)
