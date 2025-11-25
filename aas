@@ -1,17 +1,21 @@
-# pack-genesis64_noargs_ascii.ps1
+# pack-genesis64_all_auto.ps1 (Set-WbUserLogin を条件実行に修正)
 # Requirements: Windows PowerShell 5.1 (x64), GENESIS64 10.97 PowerShell cmdlets
-# Notes: ASCII-only to avoid encoding issues.
 
 $ErrorActionPreference = 'Stop'
 
-# ===== CONFIG (edit here) =====
-$OutDir   = 'D:\pkg'                 # e.g. '\\NAS01\Share\pkg'
-$Keep     = 5
-$HostName = 'localhost'
-$Encrypt  = $false
-$Password = ''
-$FileName = ('MyProject_{0:yyyyMMdd_HHmm}.pkgx' -f (Get-Date))
-# ==============================
+# ===== CONFIG =====
+$OutDir        = 'D:\pkg'      # e.g. '\\NAS01\Share\pkg'
+$Keep          = 5
+$HostName      = 'localhost'
+$Encrypt       = $false
+$Password      = ''            # pack password (if $Encrypt=$true)
+$FileName      = ('MyProject_{0:yyyyMMdd_HHmm}.pkgx' -f (Get-Date))
+
+# --- ICONICS Security ログインを行う場合だけ true に ---
+$UseLogin      = $true        # セキュリティ無効/不要なら false のまま
+$LoginUser     = 'USER'            # 例 'Administrator' または 'DOMAIN\User'
+$LoginPassword = 'Syun1101'            # プレーンで記入（社内運用ポリシーに合わせて）
+# ===================
 
 # Relaunch as 64-bit if needed
 if (-not [Environment]::Is64BitProcess) {
@@ -20,36 +24,80 @@ if (-not [Environment]::Is64BitProcess) {
   exit $LASTEXITCODE
 }
 
-# Check required cmdlets
-$cmds = 'Set-WbHost','Set-WbUserLogin','New-WbRootKey','Set-PackWbConfiguration','Get-WbPackFile'
-$missing = $cmds | Where-Object { -not (Get-Command $_ -ErrorAction SilentlyContinue) }
-if ($missing) {
-  throw ('GENESIS64 cmdlets not found: {0}. Please use the "GENESIS64 PowerShell" shell.' -f ($missing -join ', '))
-}
+# Base cmdlets check
+$baseCmds = 'Set-WbHost','Set-WbUserLogin','New-WbRootKey','Set-PackWbConfiguration','Get-WbPackFile'
+$missing  = $baseCmds | Where-Object { -not (Get-Command $_ -ErrorAction SilentlyContinue) }
+if ($missing) { throw ('GENESIS64 cmdlets not found: {0}. Use the "GENESIS64 PowerShell" shell.' -f ($missing -join ', ')) }
 
-# Connect (positional parameter for compatibility)
+# Connect
 if ([string]::IsNullOrWhiteSpace($HostName)) { $HostName = 'localhost' }
 Set-WbHost $HostName
 
-# Login (no-op if security disabled)
-Set-WbUserLogin -ErrorAction SilentlyContinue
-
-# Build pack task (no subexpression in strings)
-$ProjectKey = New-WbRootKey
-$protect    = if ($Encrypt) { 'Encrypted' } else { 'None' }
-$stamp      = (Get-Date -Format 'yyyy-MM-dd HH:mm')
-$comment    = ('Auto pack {0}' -f $stamp)
-
-$packParams = @{
-  ProjectKey      = $ProjectKey
-  UserComments    = $comment
-  CompressFiles   = 1
-  ProtectionLevel = $protect
-  Password        = $Password
+# Optional login (only when credentials are supplied)
+if ($UseLogin) {
+  if ([string]::IsNullOrWhiteSpace($LoginUser) -or [string]::IsNullOrWhiteSpace($LoginPassword)) {
+    throw 'Set $LoginUser and $LoginPassword or set $UseLogin=$false.'
+  }
+  $sec  = ConvertTo-SecureString $LoginPassword -AsPlainText -Force
+  $cred = New-Object System.Management.Automation.PSCredential ($LoginUser, $sec)
+  Set-WbUserLogin -Credentials $cred
 }
-$task = Set-PackWbConfiguration @packParams
 
-# Output and retention
+# Project root
+$ProjectKey = New-WbRootKey
+
+# Provider guess from command name
+function Get-ProviderFromCmdName([string]$name) {
+  if ($name -match 'Gwx')             { return 'Gwx' }
+  if ($name -match '\bHH\b')          { return 'HH' }
+  if ($name -match 'Asset|^Aw[^a-z]') { return 'AWX' }
+  if ($name -match 'Alarm')           { return 'AlarmWorX64' }
+  if ($name -match 'Dwx|DataWorX')    { return 'Dwx' }
+  if ($name -match 'Twx|TrendWorX')   { return 'Twx' }
+  if ($name -match 'Earth|Ewx')       { return 'Ewx' }
+  if ($name -match 'ReportWorX|Rwx')  { return 'Rwx' }
+  if ($name -match 'ScheduleWorX|Swx'){ return 'Swx' }
+  return $null
+}
+
+# Discover roots
+$rootCmds = @()
+$rootCmds += Get-Command -ErrorAction SilentlyContinue -Module Ico*Powershell -Name 'Get-*Root*'
+$hh = Get-Command -ErrorAction SilentlyContinue -Module Ico*Powershell -Name 'Get-HHConfiguration'
+if ($hh) { $rootCmds += $hh }
+
+$items    = @()
+$seenKeys = New-Object System.Collections.Generic.HashSet[string]
+
+foreach ($cmd in $rootCmds | Sort-Object Name -Unique) {
+  try {
+    $obj = & $cmd
+    if ($null -eq $obj) { continue }
+    $key = $null
+    if ($obj.PSObject.Properties.Name -contains 'Key') { $key = $obj.Key }
+    elseif ($obj -is [array] -and $obj.Length -gt 0 -and ($obj[0].PSObject.Properties.Name -contains 'Key')) { $key = $obj[0].Key }
+    if ([string]::IsNullOrWhiteSpace($key)) { continue }
+
+    $provider = Get-ProviderFromCmdName $cmd.Name
+    if ([string]::IsNullOrWhiteSpace($provider)) { continue }
+
+    if ($seenKeys.Add($key)) {
+      $items += New-PackItemSettings -HostName $HostName -Provider $provider -Key $key
+    }
+  } catch { }
+}
+
+if ($items.Count -eq 0) {
+  throw 'No PackItems were discovered. Run in "GENESIS64 PowerShell" and ensure provider modules are installed.'
+}
+
+# Configure pack task
+$protect = if ($Encrypt) { 'Encrypted' } else { 'None' }
+$stamp   = (Get-Date -Format 'yyyy-MM-dd HH:mm')
+$comment = ('Auto pack {0}' -f $stamp)
+$task    = Set-PackWbConfiguration -ProjectKey $ProjectKey -PackItems $items -CompressFiles 1 -GwxResolveDependencies 1 -ProtectionLevel $protect -Password $Password -UserComments $comment
+
+# Save file and keep N latest
 New-Item -ItemType Directory -Path $OutDir -Force | Out-Null
 $PkgPath = Join-Path $OutDir $FileName
 Get-WbPackFile -Task $task -TargetPath $PkgPath
